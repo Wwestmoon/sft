@@ -47,7 +47,7 @@ class OpenAICompatibleAPI:
             "messages": [
                 {"role": "user", "content": prompt}
             ],
-            "max_tokens": 100,
+            "max_tokens": 8192,
             "temperature": self.temperature,
             "top_p": self.top_p
         }
@@ -55,13 +55,19 @@ class OpenAICompatibleAPI:
         try:
             # 构建完整的 API 端点
             url = f"{self.base_url.rstrip('/')}/chat/completions"
-            response = requests.post(url, headers=self.headers, json=data)
+            response = requests.post(url, headers=self.headers, json=data, timeout=60)
             response.raise_for_status()
 
             result = response.json()
             return result["choices"][0]["message"]["content"].strip()
         except Exception as e:
-            print(f"API 调用失败: {e}")
+            print(f"API 调用失败: {type(e).__name__}: {str(e)}")
+            if hasattr(e, 'response') and e.response:
+                try:
+                    error_details = e.response.json()
+                    print(f"API 错误详情: {json.dumps(error_details, ensure_ascii=False, indent=2)}")
+                except:
+                    print(f"API 响应内容: {e.response.text}")
             return "error"
 
 
@@ -305,9 +311,9 @@ def main():
     # 解析命令行参数
     import argparse
     parser = argparse.ArgumentParser(description="运行 LLM 基准测试，支持并发处理和准确率计算")
-    parser.add_argument("--model", default="gpt4o-mini", help="模型名称")
+    parser.add_argument("--model", default="gpt-4o-mini", help="模型名称")
     parser.add_argument("--base_url", default="https://yunwu.ai/v1", help="API 端点")
-    parser.add_argument("--api_key", default="sk-fVYYQ0opk2YfCMR7018370CeD0Cf429aAbA31f01Dd1dBf26", help="API 密钥")
+    parser.add_argument("--api_key", default="sk-mBv9A5UrRCQ7OzJDPLKZkjIRzoywwVcu4wvStR4P6E7K9Kw9", help="API 密钥")
     parser.add_argument("--num_samples", type=int, default=10, help="测试样本数量")
     parser.add_argument("--input_file", default='/Users/westmoon/mycode/table/processed_data/test_processed.jsonl', help="输入文件路径")
     parser.add_argument("--output_dir", default='/Users/westmoon/mycode/table/baseline_results', help="输出目录")
