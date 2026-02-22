@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Zero-Shot Baseline 脚本，支持并发处理和准确率计算
+Zero-Shot Baseline 脚本，支持并发处理、准确率计算、重试机制和循环测试
 读取 JSONL 格式的数据集
 """
 
@@ -10,6 +10,8 @@ import json
 import requests
 import sys
 import re
+import csv
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 
@@ -38,9 +40,9 @@ class OpenAICompatibleAPI:
             "Authorization": f"Bearer {self.api_key}"
         }
 
-    def call(self, prompt):
+    def call(self, prompt, max_retries=5):
         """
-        调用 OpenAI 兼容的 API
+        调用 OpenAI 兼容的 API，支持重试机制
         """
         data = {
             "model": self.model,
@@ -52,23 +54,30 @@ class OpenAICompatibleAPI:
             "top_p": self.top_p
         }
 
-        try:
-            # 构建完整的 API 端点
-            url = f"{self.base_url.rstrip('/')}/chat/completions"
-            response = requests.post(url, headers=self.headers, json=data, timeout=60)
-            response.raise_for_status()
+        for retry in range(1, max_retries + 1):
+            try:
+                # 构建完整的 API 端点
+                url = f"{self.base_url.rstrip('/')}/chat/completions"
+                response = requests.post(url, headers=self.headers, json=data, timeout=60)
+                response.raise_for_status()
 
-            result = response.json()
-            return result["choices"][0]["message"]["content"].strip()
-        except Exception as e:
-            print(f"API 调用失败: {type(e).__name__}: {str(e)}")
-            if hasattr(e, 'response') and e.response:
-                try:
-                    error_details = e.response.json()
-                    print(f"API 错误详情: {json.dumps(error_details, ensure_ascii=False, indent=2)}")
-                except:
-                    print(f"API 响应内容: {e.response.text}")
-            return "error"
+                result = response.json()
+                return result["choices"][0]["message"]["content"].strip()
+
+            except Exception as e:
+                print(f"API 调用失败 (重试 {retry}/{max_retries}): {type(e).__name__}: {str(e)}")
+                if hasattr(e, 'response') and e.response:
+                    try:
+                        error_details = e.response.json()
+                        print(f"API 错误详情: {json.dumps(error_details, ensure_ascii=False, indent=2)}")
+                    except:
+                        print(f"API 响应内容: {e.response.text}")
+
+                if retry < max_retries:
+                    print(f"等待 {2 ** retry} 秒后重试...")
+                    time.sleep(2 ** retry)
+
+        return "error"
 
 
 def build_prompt(markdown_table, question):
@@ -187,7 +196,7 @@ def process_sample(sample, model_config):
         # 构建 prompt
         prompt = build_prompt(sample['table'], sample['question'])
 
-        # 调用 API
+        # 调用 API（支持重试）
         answer = api.call(prompt)
 
         # 提取答案并检查匹配
@@ -285,32 +294,120 @@ def run_baseline(input_file, output_file, model_config, num_samples=10, max_work
             except Exception as e:
                 print(f"任务执行失败: {e}")
 
-    # 输出统计信息
-    print(f"\n=== 基线实验结果 ===\n")
-    print(f"总样本数: {len(samples)}")
-    print(f"成功样本数: {len(successful_results)}")
-    print(f"失败样本数: {len(errors)}")
-
-    if successful_results:
-        # 计算准确率
-        correct_predictions = sum(1 for result in successful_results if result['match'])
-        accuracy = correct_predictions / len(successful_results) * 100
-        print(f"准确率: {accuracy:.2f}%")
-        print(f"正确预测数: {correct_predictions}")
-        print(f"错误预测数: {len(successful_results) - correct_predictions}")
-
-    print(f"结果已保存到: {output_file}")
-    if errors:
-        error_file = output_file.replace('.jsonl', '_errors.jsonl')
-        print(f"错误结果已保存到: {error_file}")
-
     return successful_results, errors
+
+
+def run_cyclic_test(input_file, model_config, num_samples=10, max_workers=10, num_cycles=1):
+    """
+    运行循环测试，计算平均准确率
+    """
+    cycle_results = []
+
+    for cycle in range(1, num_cycles + 1):
+        print(f"\n=== 循环测试 {cycle}/{num_cycles} ===\n")
+
+        # 为每个循环创建唯一的输出文件
+        cycle_output_file = f"cycle_{cycle}_predictions.jsonl"
+        # 确保每次循环重新处理所有样本
+        if os.path.exists(cycle_output_file):
+            os.remove(cycle_output_file)
+        if os.path.exists(cycle_output_file.replace('.jsonl', '_errors.jsonl')):
+            os.remove(cycle_output_file.replace('.jsonl', '_errors.jsonl'))
+
+        successful_results, errors = run_baseline(
+            input_file, cycle_output_file, model_config,
+            num_samples=num_samples, max_workers=max_workers
+        )
+
+        if successful_results:
+            correct_predictions = sum(1 for result in successful_results if result['match'])
+            accuracy = correct_predictions / len(successful_results) * 100
+        else:
+            accuracy = 0.0
+
+        cycle_result = {
+            'cycle': cycle,
+            'total_samples': num_samples,
+            'successful_samples': len(successful_results),
+            'errors': len(errors),
+            'accuracy': accuracy,
+            'correct_predictions': sum(1 for result in successful_results if result['match']) if successful_results else 0,
+            'error_predictions': len(successful_results) - sum(1 for result in successful_results if result['match']) if successful_results else 0
+        }
+
+        cycle_results.append(cycle_result)
+        print(f"\n循环 {cycle} 结果: 准确率 {accuracy:.2f}%")
+
+    return cycle_results
+
+
+def save_cycle_results_to_csv(cycle_results, output_file):
+    """
+    将循环测试结果保存到 CSV 文件
+    """
+    output_dir = os.path.dirname(output_file)
+    if output_dir and not os.path.exists(output_dir):
+        os.makedirs(output_dir, exist_ok=True)
+
+    with open(output_file, 'w', encoding='utf-8', newline='') as csvfile:
+        fieldnames = ['cycle', 'total_samples', 'successful_samples', 'errors', 'accuracy', 'correct_predictions', 'error_predictions']
+        writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+
+        writer.writeheader()
+        for result in cycle_results:
+            writer.writerow(result)
+
+    print(f"循环测试结果已保存到: {output_file}")
+
+
+def calculate_average_score(cycle_results):
+    """
+    计算平均分数
+    """
+    total_cycles = len(cycle_results)
+    if total_cycles == 0:
+        return {
+            'average_accuracy': 0.0,
+            'total_samples': 0,
+            'total_successful': 0,
+            'total_errors': 0,
+            'total_correct': 0,
+            'total_incorrect': 0
+        }
+
+    total_accuracy = sum(result['accuracy'] for result in cycle_results)
+    total_samples = sum(result['total_samples'] for result in cycle_results)
+    total_successful = sum(result['successful_samples'] for result in cycle_results)
+    total_errors = sum(result['errors'] for result in cycle_results)
+    total_correct = sum(result['correct_predictions'] for result in cycle_results)
+    total_incorrect = sum(result['error_predictions'] for result in cycle_results)
+
+    average_accuracy = total_accuracy / total_cycles
+
+    print(f"\n=== 平均分数 ===\n")
+    print(f"循环次数: {total_cycles}")
+    print(f"平均准确率: {average_accuracy:.2f}%")
+    print(f"总样本数: {total_samples}")
+    print(f"总成功样本: {total_successful}")
+    print(f"总错误数: {total_errors}")
+    print(f"总正确预测: {total_correct}")
+    print(f"总错误预测: {total_incorrect}")
+
+    return {
+        'average_accuracy': average_accuracy,
+        'total_cycles': total_cycles,
+        'total_samples': total_samples,
+        'total_successful': total_successful,
+        'total_errors': total_errors,
+        'total_correct': total_correct,
+        'total_incorrect': total_incorrect
+    }
 
 
 def main():
     # 解析命令行参数
     import argparse
-    parser = argparse.ArgumentParser(description="运行 LLM 基准测试，支持并发处理和准确率计算")
+    parser = argparse.ArgumentParser(description="运行 LLM 基准测试，支持并发处理、准确率计算、重试机制和循环测试")
     parser.add_argument("--model", default="gpt-4o-mini", help="模型名称")
     parser.add_argument("--base_url", default="https://yunwu.ai/v1", help="API 端点")
     parser.add_argument("--api_key", default="sk-mBv9A5UrRCQ7OzJDPLKZkjIRzoywwVcu4wvStR4P6E7K9Kw9", help="API 密钥")
@@ -320,6 +417,8 @@ def main():
     parser.add_argument("--temperature", type=float, default=0.1, help="采样温度")
     parser.add_argument("--top_p", type=float, default=0.9, help="核采样参数")
     parser.add_argument("--max_workers", type=int, default=10, help="最大并发工作线程数")
+    parser.add_argument("--num_cycles", type=int, default=1, help="循环测试次数")
+    parser.add_argument("--save_csv", action="store_true", help="是否保存结果到 CSV 文件")
 
     args = parser.parse_args()
 
@@ -334,20 +433,73 @@ def main():
 
     # 输入和输出文件路径
     os.makedirs(args.output_dir, exist_ok=True)
-    output_file = os.path.join(args.output_dir, f"{model_config['model']}_predictions_with_accuracy.jsonl")
 
-    # 确保输出文件存在（如果不存在则创建空文件）
-    if not os.path.exists(output_file):
-        open(output_file, 'w').close()
+    if args.num_cycles > 1:
+        # 运行循环测试
+        cycle_results = run_cyclic_test(
+            args.input_file,
+            model_config,
+            num_samples=args.num_samples,
+            max_workers=args.max_workers,
+            num_cycles=args.num_cycles
+        )
 
-    # 运行 Baseline
-    successful_results, errors = run_baseline(
-        args.input_file,
-        output_file,
-        model_config,
-        num_samples=args.num_samples,
-        max_workers=args.max_workers
-    )
+        # 计算平均分数
+        average_result = calculate_average_score(cycle_results)
+
+        if args.save_csv:
+            csv_filename = os.path.join(args.output_dir, f"{model_config['model']}_cycle_test_results.csv")
+            save_cycle_results_to_csv(cycle_results, csv_filename)
+            # 添加平均结果到 CSV 文件
+            with open(csv_filename, 'a', encoding='utf-8', newline='') as csvfile:
+                writer = csv.writer(csvfile)
+                writer.writerow([])
+                writer.writerow(["平均结果", "", "", "", "", "", ""])
+                writer.writerow([
+                    "循环次数", "总样本数", "总成功样本", "总错误数",
+                    f"平均准确率: {average_result['average_accuracy']:.2f}%",
+                    "总正确预测", "总错误预测"
+                ])
+                writer.writerow([
+                    average_result['total_cycles'],
+                    average_result['total_samples'],
+                    average_result['total_successful'],
+                    average_result['total_errors'],
+                    "",
+                    average_result['total_correct'],
+                    average_result['total_incorrect']
+                ])
+
+    else:
+        # 运行单次测试
+        output_file = os.path.join(args.output_dir, f"{model_config['model']}_predictions_with_accuracy.jsonl")
+        if os.path.exists(output_file):
+            os.remove(output_file)
+        if os.path.exists(output_file.replace('.jsonl', '_errors.jsonl')):
+            os.remove(output_file.replace('.jsonl', '_errors.jsonl'))
+
+        successful_results, errors = run_baseline(
+            args.input_file,
+            output_file,
+            model_config,
+            num_samples=args.num_samples,
+            max_workers=args.max_workers
+        )
+
+        if successful_results:
+            correct_predictions = sum(1 for result in successful_results if result['match'])
+            accuracy = correct_predictions / len(successful_results) * 100
+            print(f"\n=== 单次测试结果 ===\n")
+            print(f"总样本数: {args.num_samples}")
+            print(f"成功样本数: {len(successful_results)}")
+            print(f"失败样本数: {len(errors)}")
+            print(f"准确率: {accuracy:.2f}%")
+            print(f"正确预测数: {correct_predictions}")
+            print(f"错误预测数: {len(successful_results) - correct_predictions}")
+        else:
+            print("没有成功的测试结果")
+
+    print("\n=== 测试完成 ===")
 
 
 if __name__ == "__main__":

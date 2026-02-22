@@ -8,7 +8,15 @@ training_data/
 baseline_results/
 table_wxy/
 table/Table-Fact-Checking/
-table/WikiTableQuestions/
+table/WikiTableQuestions/csv/
+table/WikiTableQuestions/data/
+table/WikiTableQuestions/docs/
+table/WikiTableQuestions/page/
+table/WikiTableQuestions/tagged/
+table/WikiTableQuestions/weblib/external/
+table/WikiTableQuestions/__pycache__/
+table/WikiTableQuestions/weblib/__pycache__/
+!table/WikiTableQuestions/evaluator.py
 
 # Ignore __pycache__ and other temporary files
 __pycache__/
