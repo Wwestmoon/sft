@@ -7,6 +7,8 @@ processed_data/
 training_data/
 baseline_results/
 table_wxy/
+table/Table-Fact-Checking/
+table/WikiTableQuestions/
 
 # Ignore __pycache__ and other temporary files
 __pycache__/
