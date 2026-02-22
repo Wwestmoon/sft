@@ -1,0 +1,33 @@
+# Ignore JSONL files (large data files)
+*.jsonl
+*.JSONL
+
+# Ignore processed data files
+processed_data/
+training_data/
+baseline_results/
+table_wxy/
+
+# Ignore __pycache__ and other temporary files
+__pycache__/
+*.pyc
+*.pyo
+*~
+
+# Ignore IDE files
+.vscode/
+.idea/
+*.swp
+
+# Ignore large training data files
+training_data_0_None.jsonl
+training_data_0_None_errors.jsonl
+
+# Ignore OS files
+.DS_Store
+Thumbs.db
+
+# Ignore temporary files
+*.tmp
+*.temp
+*.log
