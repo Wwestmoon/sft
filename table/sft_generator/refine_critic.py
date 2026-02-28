@@ -74,7 +74,7 @@ class ErrorAnalyzer:
             f"Question: {question}\n"
             f"Table:\n{table}\n"
             f"Problem Decomposition: {json.dumps(decomposition, ensure_ascii=False)}\n"
-            f"Sub-Question Results: {json.dumps([{'sub_question': r['sub_question'], 'strategy': r['strategy'], 'answer': r['answer'], 'code': r.get('code', '') if r['strategy'] == 'Python' else '', 'reasoning': r.get('reasoning', '') if r['strategy'] == 'LLM' else ''} for r in sub_question_results], ensure_ascii=False)}\n"
+            f"Sub-Question Results: {json.dumps([{'sub_question': r['sub_question'], 'strategy': r['strategy'], 'data_flow': r['data_flow'] if r['strategy'] == 'Python' else '' , 'code': r.get('code', '') if r['strategy'] == 'Python' else '', 'reasoning': r.get('reasoning', '') if r['strategy'] == 'LLM' else ''} for r in sub_question_results], ensure_ascii=False)}\n"
             f"Final Response: {final_response}\n"
             f"Expected Answer: {expected_answer}\n\n"
             f"Your analysis should include:\n"
@@ -98,8 +98,7 @@ class ErrorAnalyzer:
             f"4. If the error is a subquestion_error, please specify the index of the erroneous sub-question (starting from 0)\n\n"
             f"Format your response as JSON with the following fields:\n"
             f"- type: the type of error (must be one of plan_error, subquestion_error, answer_synthesis_error)\n"
-            f"- reason: detailed error reason\n"
-            f"- suggestion: specific improvement suggestion\n"
+            f"- reason: error reason and specific improvement suggestion\n"
             f"- sub_question_index: the index of the erroneous sub-question (only required for subquestion_error)"
         )
 
@@ -130,7 +129,7 @@ class ErrorAnalyzer:
         return {
             "type": "parse_failure",
             "reason": "Failed to parse LLM analysis result",
-            "suggestion": "Check the response format of the LLM API"
+            # "suggestion": "Check the response format of the LLM API"
         }
 
 
@@ -165,26 +164,27 @@ class ErrorFixer:
         if self.llm_api is not None:
             return self._fix_with_llm(question, generated_response, expected_answer, error_analysis)
         else:
-            return self._fix_with_rules(question, generated_response, expected_answer, error_analysis)
+            # return self._fix_with_rules(question, generated_response, expected_answer, error_analysis)
+            return None
 
-    def _fix_with_rules(self, question: str, generated_response: str,
-                        expected_answer: str, error_analysis: Dict[str, Any]) -> str:
-        """
-        Fix response using rules
+    # def _fix_with_rules(self, question: str, generated_response: str,
+    #                     expected_answer: str, error_analysis: Dict[str, Any]) -> str:
+    #     """
+    #     Fix response using rules
 
-        Args:
-            question: Question
-            generated_response: Generated response
-            expected_answer: Expected answer
-            error_analysis: Error analysis result
+    #     Args:
+    #         question: Question
+    #         generated_response: Generated response
+    #         expected_answer: Expected answer
+    #         error_analysis: Error analysis result
 
-        Returns:
-            Fixed response
-        """
-        if error_analysis.get("type") == "answer_mismatch":
-            return generated_response.replace(
-                self.answer_extractor.extract(generated_response), expected_answer)
-        return generated_response
+    #     Returns:
+    #         Fixed response
+    #     """
+    #     if error_analysis.get("type") == "answer_mismatch":
+    #         return generated_response.replace(
+    #             self.answer_extractor.extract(generated_response), expected_answer)
+    #     return generated_response
 
     def _fix_with_llm(self, question: str, generated_response: str,
                       expected_answer: str, error_analysis: Dict[str, Any]) -> str:
@@ -325,7 +325,7 @@ class CriticRefine:
             sub_question = item['sub_question']
             strategy = item['strategy']
             try:
-                result = self.solver.solve_sub_question(df, sub_question, strategy)
+                result = self.solver.solve_sub_question(table,df, sub_question, strategy)
                 improved_sub_question_results.append(result)
             except Exception as e:
                 improved_sub_question_results.append({
@@ -335,7 +335,7 @@ class CriticRefine:
                     "answer": "求解失败"
                 })
         # 重新合成答案
-        final_response = self.synthesizer.synthesize_answer(improved_decomposition, improved_sub_question_results, question)
+        final_response = self.synthesizer.synthesize_answer(table,improved_decomposition, improved_sub_question_results, question)
         return {"decomposition": improved_decomposition, "sub_question_results": improved_sub_question_results, "final_response": final_response}
 
     def _refine_subquestion_solving(self, question: str, table: str, decomposition: List[Dict],
@@ -382,19 +382,19 @@ class CriticRefine:
                             prev_result = improved_sub_question_results[j]
                             context_str += (
                                 f"Previous question {j+1}: \"{prev_item['sub_question']}\" "
-                                f"Answer: \"{prev_result['answer']}\"\n"
+                                f"Answer: \"{prev_result['data_flow'] if strategy =='LLM' else prev_result['answer']}\"\n"
                             )
                         context_sub_question = context_str + f"Now answer the following question: {sub_question}"
                     else:
                         context_sub_question = sub_question
                     # 在解决子问题时结合报错信息
                     if strategy == "Python":
-                        result = self._solve_python_sub_question_with_error(df, context_sub_question, error_analysis)
+                        result = self._solve_python_sub_question_with_error( table,df, sub_question, context_sub_question,error_analysis)
                     else:
-                        result = self._solve_llm_sub_question_with_error(df, context_sub_question, error_analysis)
+                        result = self._solve_llm_sub_question_with_error( table,sub_question,context_sub_question, error_analysis)
                 elif i > sub_question_index:
                     # 出错子问题之后的子问题，重新执行但不结合报错信息
-                    result = self.solver.solve_sub_question(df, sub_question, strategy, context_info)
+                    result = self.solver.solve_sub_question( table,df,sub_question, strategy, context_info)
                 else:
                     # 出错子问题之前的子问题，保持原结果
                     result = sub_question_results[i]
@@ -406,6 +406,7 @@ class CriticRefine:
                 # 保存上下文信息
                 context_info.append({
                     "sub_question": item['sub_question'],
+                    "strategy":strategy,
                     "answer": result['answer']
                 })
             except Exception as e:
@@ -424,7 +425,7 @@ class CriticRefine:
         final_response = self.synthesizer.synthesize_answer(decomposition, improved_sub_question_results, question)
         return {"decomposition": decomposition, "sub_question_results": improved_sub_question_results, "final_response": final_response}
 
-    def _solve_python_sub_question_with_error(self, df, sub_question, error_analysis):
+    def _solve_python_sub_question_with_error(self, markdown_table,df, sub_question,context_sub_question, error_analysis):
         """
         结合报错信息使用 Python 策略解决子问题
         """
@@ -452,7 +453,7 @@ class CriticRefine:
                 f"Table columns: {list(df.columns)}\n"
                 f"DataFrame dtypes: {df.dtypes.to_dict()}\n"
                 f"DataFrame content (first 5 rows):\n{df.head().to_string(index=False)}\n\n"
-                f"Sub-question: {sub_question}\n\n"
+                f"Sub-question: {context_sub_question}\n\n"
                 f"Error Reason: {error_analysis.get('suggestion', '')}\n\n"
                 f"Previous Attempt Code: {previous_code}\n\n"
                 f"Previous Attempt Error: {previous_error}\n\n"
@@ -476,7 +477,7 @@ class CriticRefine:
 
                 data_flow = self._execute_code_safely(code_block, df)
 
-                answer = self._generate_natural_answer(sub_question, data_flow)
+                answer = self._generate_natural_answer(markdown_table,sub_question, data_flow)
                 print("自然语言：",answer)
                 return {
                     "sub_question": sub_question,
@@ -493,27 +494,23 @@ class CriticRefine:
                 # 如果是最后一次尝试，使用 LLM 求解作为备用方案
                 if attempt == max_attempts - 1:
                     print("已达到最大尝试次数，使用 LLM 求解作为备用方案")
-                    return self._solve_llm_sub_question_with_error(df, sub_question, error_analysis)
+                    return self._solve_llm_sub_question_with_error(markdown_table, sub_question, error_analysis)
 
-    def _solve_llm_sub_question_with_error(self, df, sub_question, error_analysis):
+    def _solve_llm_sub_question_with_error(self, markdown_table, sub_question,context_sub_question, error_analysis):
         """
         结合报错信息使用 LLM 策略解决子问题
         """
-        from tabulate import tabulate
-        markdown_table = tabulate(df, headers='keys', tablefmt='pipe')
-
         prompt = (
             f"Please answer the following question about the table. Make sure to explicitly reference specific data "
             f"from the table in your answer.\n\n"
             f"Table:\n{markdown_table}\n\n"
             f"Question: {sub_question}\n\n"
-            f"Error Reason: {error_analysis.get('suggestion', '')}\n\n"
+            f"Error Reason: {error_analysis.get('reason', '')}\n\n"
             f"Your answer should include:\n"
             f"1. Your reasoning process about how you arrived at the answer\n"
             f"2. A final answer that addresses the error identified in the analysis and retains all key data flow information\n\n"
             f"Format your response as:\n"
-            f"Reasoning: [Your reasoning process]\n"
-            f"Answer: [Your answer that includes all key data flow information]"
+            f"Answer: [Your detailed reasoning process that includes all key data flow information]"
         )
 
         try:
@@ -586,25 +583,49 @@ class CriticRefine:
 
         return data_flow
 
-    def _generate_natural_answer(self, sub_question, data_flow):
+    def _generate_natural_answer(self,markdown_table, sub_question, data_flow):
         """
         Generate natural language answer
         """
-        prompt = (
-            f"Based on the following sub-question and data flow (which contains intermediate and final results), "
-            f"generate a natural language answer that does not mention technical terms like 'code' or 'execution', "
-            f"but clearly references specific numbers and facts from the data flow.\n\n"
-            f"Sub-question: {sub_question[-1]}\n\n"
-            f"Data flow:\n"
-            f"{chr(10).join(data_flow)}\n\n"
-            f"Your answer should focus on the data and results, not how they were obtained."
-        )
+        # prompt = (
+        #     f"Based on the following sub-question and data flow (which contains intermediate and final results), "
+        #     f"generate a natural language answer that does not mention technical terms like 'code' or 'execution', "
+        #     f"but clearly references specific numbers and facts from the data flow.\n\n"
+        #     f"Table:{markdown_table}\n\n"
+        #     f"Sub-question: {sub_question[-1]}\n\n"
+        #     f"Data flow:\n"
+        #     f"{chr(10).join(data_flow)}\n\n"
+        #     f"Your answer should focus on how you arrived at the answer based on the table."
+        # )
+        prompt=f"""You will be given:
+
+1. A structured table
+2. A question
+3. A verified final answer (computed using Python)
+
+Your task is to generate a clear step-by-step reasoning process based only on the table.
+
+Requirements:
+
+- The reasoning must be based only on the table.
+- Show intermediate steps when calculations are needed.
+- The logic should naturally lead to the given final answer.
+- Do not use external knowledge.
+- Do not include any information that is not directly relevant to the question.
+
+Table:{markdown_table}
+Sub-question: {sub_question}
+Verified final answer:
+{chr(10).join(data_flow)}
+
+Think step by step and then provide the final answer."""
 
         try:
             return self.llm_api.call(prompt)
         except Exception as e:
             print(f"Failed to generate natural language answer: {e}")
             return "Failed to generate natural language answer"
+
 
     def _extract_answer_from_reasoning(self, reasoning):
         """
@@ -684,34 +705,21 @@ class CriticRefine:
                 f"Answer: {result['answer']}"
             )
 
-        prompt = (
-            f"Please synthesize the answers to the sub-questions into a comprehensive response to the original question.\n\n"
-            f"Original Question: {question}\n\n"
-            f"Sub-question Answers:\n"
-            f"{chr(10).join(results_str)}\n\n"
-            f"Error Reason: {error_analysis.get('suggestion', '')}\n\n"
-            f"Your response must strictly adhere to the following requirements:\n"
-            f"1. Follow the logical flow from the sub-question answers to the final answer\n"
-            f"2. Be coherent and easy to understand\n"
-            f"3. Include all relevant information from the sub-question answers\n"
-            f"4. End with a clear final answer in the exact format: 'Final Answer: [Your answer]'\n"
-            f"5. Avoid mentioning 'sub-questions' or 'strategies'\n"
-            f"6. The final answer must be concise and directly address the question\n"
-            f"7. If the answer is a number representing a quantity (e.g., 'how many'), only include the numeric value without any additional text or units\n"
-            f"8. If the answer is a number representing a duration (e.g., 'how long'), include the numeric value with appropriate units (e.g., 'years', 'days')\n"
-            f"9. If the question asks for a name, category, or identifier (e.g., 'which place', 'which team', 'what is the name'), ensure the final answer includes only the name or identifier, not numerical values or other details\n"
-            f"10. Verify that the final answer is consistent with all sub-question answers\n"
-            f"11. Ensure that your answer is accurate and free of errors\n"
-            f"12. If there are conflicting answers in sub-questions, resolve them logically\n"
-            f"13. Address the improvement suggestion to ensure the final answer is correct\n\n"
-            f"Format your response with the following structure:\n"
-            f"1. Start with a clear introductory sentence that explains your approach to answering the question\n"
-            f"2. Provide detailed reasoning steps that lead from the available information to the final answer\n"
-            f"3. Include relevant calculations, data points, or examples from the table to support your reasoning\n"
-            f"4. End with a concise final answer in the required format\n\n"
-            f"[Your logical reasoning flow here]\n\n"
-            f"Final Answer: [Your answer]"
-        )
+        prompt=f"""
+# Role
+You are a Lead Data Analyst. Your goal is to refine your response based on the initial response and error.
+
+# Inputs
+- **Original Question**: {question}
+- **Table Data**: {table}
+- **Original Response**: {final_response}
+- **Expected Answer**: {expected_answer}
+-  Error Reason: {error_analysis.get('reason', '')}
+
+# Response Format
+[Reasoning Process]
+Final Answer: [Final Answer]
+"""
 
         try:
             final_response = self.llm_api.call(prompt)

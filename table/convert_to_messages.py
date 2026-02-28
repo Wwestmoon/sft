@@ -68,10 +68,10 @@ def main():
     # 设置命令行参数
     parser = argparse.ArgumentParser(description='Convert JSONL to messages format with answer verification')
     parser.add_argument('--input', '-i',
-                        default='/Users/westmoon/mycode/table/baseline_results/baseline_sft_critic_0_10.jsonl',
+                        default='/Users/westmoon/mycode/table/baseline_results/baseline_sft_critic_ver1_0_all.jsonl',
                         help='Path to input JSONL file')
     parser.add_argument('--output', '-o',
-                        default='/Users/westmoon/mycode/table/baseline_results/baseline_sft_critic_0_10_messages.jsonl',
+                        default='/Users/westmoon/mycode/table/baseline_results/baseline_sft_critic_ver1_0_all.jsonl.messages.jsonl',
                         help='Path to output JSONL file')
 
     args = parser.parse_args()

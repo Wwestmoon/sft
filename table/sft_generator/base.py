@@ -58,7 +58,7 @@ class OpenAICompatibleAPI(LLMAPI):
             "messages": [
                 {"role": "user", "content": prompt}
             ],
-            "max_tokens": 1000,
+            "max_tokens": 2048,
             "temperature": self.temperature,
             "top_p": self.top_p
         }

@@ -17,7 +17,7 @@ class SubQuestionSolver:
     def __init__(self, llm_api):
         self.llm_api = llm_api
 
-    def solve_sub_question(self, df, sub_question, strategy, context_info=None):
+    def solve_sub_question(self, markdown_table, df, sub_question, strategy, context_info=None):
         """
         子问题求解
         """
@@ -26,18 +26,18 @@ class SubQuestionSolver:
             for i, item in enumerate(context_info):
                 context_str += (
                     f"Previous question {i+1}: \"{item['sub_question']}\" "
-                    f"Answer: \"{item['answer']}\"\n"
+                    f"Answer: \"{item['data_flow'] if item['strategy']=='LLM' else item['answer']}\"\n"
                 )
             context_sub_question = context_str + f"Now answer the following question: {sub_question}"
         else:
             context_sub_question = sub_question
 
         if strategy == "Python":
-            return self._solve_python_sub_question(df, context_sub_question)
+            return self._solve_python_sub_question(markdown_table,df, sub_question,context_sub_question)
         else:
-            return self._solve_llm_sub_question(df, context_sub_question)
+            return self._solve_llm_sub_question(markdown_table, sub_question,context_sub_question)
 
-    def _solve_python_sub_question(self, df, sub_question):
+    def _solve_python_sub_question(self, markdown_table, df, sub_question,context_sub_question):
         """
         策略 A：Python 求解（用于计算类问题）
         """
@@ -46,7 +46,7 @@ class SubQuestionSolver:
             f"Table columns: {list(df.columns)}\n"
             f"DataFrame dtypes: {df.dtypes.to_dict()}\n"
             f"DataFrame content (first 5 rows):\n{df.head().to_string(index=False)}\n\n"
-            f"Sub-question: {sub_question}\n\n"
+            f"Sub-question: {context_sub_question}\n\n"
             "Important Note: The entire table contains information relevant to the current question. "
             "Analyze the table content carefully and use the appropriate columns to solve the sub-question.\n"
             "Be very careful to only extract data that is explicitly requested by the sub-question.\n"
@@ -85,7 +85,7 @@ class SubQuestionSolver:
 
                 data_flow = self._execute_code_safely(code_block, df)
 
-                answer = self._generate_natural_answer(sub_question, data_flow)
+                answer = self._generate_natural_answer(markdown_table,sub_question, data_flow)
                 print("自然语言：",answer )
                 return {
                     "sub_question": sub_question,
@@ -102,7 +102,7 @@ class SubQuestionSolver:
                 # 如果是最后一次尝试，使用 LLM 求解作为备用方案
                 if attempt == max_attempts - 1:
                     print("已达到最大尝试次数，使用 LLM 求解作为备用方案")
-                    return self._solve_llm_sub_question(df, sub_question)
+                    return self._solve_llm_sub_question(markdown_table, sub_question)
 
     def _extract_code_block(self, response):
         """
@@ -162,45 +162,51 @@ class SubQuestionSolver:
 
         return data_flow
 
-    def _generate_natural_answer(self, sub_question, data_flow):
+    def _generate_natural_answer(self, markdown_table,sub_question, data_flow):
         """
         Generate natural language answer
         """
-        prompt = (
-            f"Based on the following sub-question and data flow (which contains intermediate and final results), "
-            f"generate a natural language answer that does not mention technical terms like 'code' or 'execution', "
-            f"but clearly references specific numbers and facts from the data flow.\n\n"
-            f"Sub-question: {sub_question[-1]}\n\n"
-            f"Data flow:\n"
-            f"{chr(10).join(data_flow)}\n\n"
-            f"Your answer should focus on the data and results, not how they were obtained."
-        )
+        prompt = f"""
+You will be given:
 
+1. A structured table
+2. A question
+3. A verified final answer (computed using Python)
+
+Your task is to generate a clear step-by-step reasoning process based only on the table.
+
+Requirements:
+
+- The reasoning must be based only on the table.
+- Show intermediate steps when calculations are needed.
+- The logic should naturally lead to the given final answer.
+- Do not use external knowledge.
+- Do not include any information that is not directly relevant to the question.
+
+Table:{markdown_table}
+Question: {sub_question}
+Verified final answer:
+{chr(10).join(data_flow)}
+
+Think step by step and then provide the final answer.
+"""
         try:
-            return self.llm_api.call(prompt)
+             return self.llm_api.call(prompt)
         except Exception as e:
             print(f"Failed to generate natural language answer: {e}")
             return "Failed to generate natural language answer"
 
-    def _solve_llm_sub_question(self, df, sub_question):
+    def _solve_llm_sub_question(self, markdown_table, sub_question,context_sub_question):
         """
         Strategy B: LLM solving (for semantic understanding problems)
         """
-        from tabulate import tabulate
-
-        markdown_table = tabulate(df, headers='keys', tablefmt='pipe')
-
         prompt = (
             f"Please answer the following question about the table. Make sure to explicitly reference specific data "
             f"from the table in your answer.\n\n"
             f"Table:\n{markdown_table}\n\n"
             f"Question: {sub_question}\n\n"
-            f"Your answer should include:\n"
-            f"1. Your detailed reasoning process about how you arrived at the answer\n"
-            f"2. A final answer that retains all key data flow information from your reasoning\n\n"
             f"Format your response strictly as follows:\n"
-            f"Reasoning: [Your detailed reasoning process]\n"
-            f"Answer: [Your answer that includes all key data flow information]"
+            f"Answer: [Your detailed reasoning process that includes all key data flow information]"
         )
 
         try:

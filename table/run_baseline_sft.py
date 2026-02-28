@@ -19,12 +19,7 @@ def build_distillation_prompt(markdown_table, question):
     prompt = (
         f"Please analyze the following table and answer the question in detail:\n\n{markdown_table}\n\n"
         f"Question: {question}\n\n"
-        f"Your response should include:\n"
-        f"1. A clear answer to the question\n"
-        f"2. A detailed reasoning process showing how you arrived at the answer\n"
-        f"3. Any relevant calculations or data points from the table\n"
-        f"\nPlease provide a comprehensive and thorough response. "
-        f"At the very end of your response, please include the final answer in the format: 'Final Answer: [your answer]'."
+        f"Please think step by step and include the final answer in the format: 'Final Answer: [your answer]'."
     )
     return prompt
 
@@ -208,7 +203,7 @@ def main():
                         default='/Users/westmoon/mycode/table/processed_data/training_processed.jsonl',
                         help='输入文件路径')
     parser.add_argument('--output_file', type=str,
-                        default='/Users/westmoon/mycode/table/baseline_results/baseline_sft',
+                        default='/Users/westmoon/mycode/table/baseline_results/baseline_sft_ver1',
                         help='输出文件路径')
     parser.add_argument('--num_samples', type=int, default=None,
                         help='处理的样本数量')
@@ -229,7 +224,7 @@ def main():
                         help='采样温度')
     parser.add_argument('--top_p', type=float, default=0.9,
                         help='核采样参数')
-    parser.add_argument('--max_attempts', type=int, default=8,
+    parser.add_argument('--max_attempts', type=int, default=3,
                         help='每个样本的最大尝试次数')
 
     args = parser.parse_args()

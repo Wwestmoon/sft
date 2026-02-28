@@ -24,9 +24,9 @@ def main():
                         default='/Users/westmoon/mycode/table/processed_data/training_processed.jsonl',
                         help='输入文件路径')
     parser.add_argument('--output_file', type=str,
-                        default='/Users/westmoon/mycode/table/training_data/training_data',
+                        default='/Users/westmoon/mycode/table/training_data/training_data_debug',
                         help='输出文件路径')
-    parser.add_argument('--num_samples', type=int, default=100,
+    parser.add_argument('--num_samples', type=int, default=1,
                         help='处理的样本数量')
     parser.add_argument('--sample_id', type=str, default=None,
                         help='指定要测试的样本 ID')

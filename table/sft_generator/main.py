@@ -69,7 +69,7 @@ class SFTDataGenerator:
                 }
 
             # 阶段 2：子问题求解（串行处理，确保下一个子问题能获得上一个的答案）
-            sub_question_results = self._solve_sub_questions_serially(df, decomposition)
+            sub_question_results = self._solve_sub_questions_serially(markdown_table,df, decomposition)
 
             # 阶段 3：答案汇总
             final_response = self.synthesizer.synthesize_answer(decomposition, sub_question_results, question)
@@ -89,7 +89,7 @@ class SFTDataGenerator:
                 "final_response": f"生成过程出错: {e}"
             }
 
-    def _solve_sub_questions_serially(self, df: Any, decomposition: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    def _solve_sub_questions_serially(self, markdown_table,df: Any, decomposition: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """
         串行求解子问题（确保下一个子问题能获得所有之前子问题的答案和问题）
 
@@ -122,7 +122,7 @@ class SFTDataGenerator:
                 context_sub_question = sub_question
 
             try:
-                result = self.solver.solve_sub_question(df, context_sub_question, strategy)
+                result = self.solver.solve_sub_question(markdown_table,df, context_sub_question, strategy)
                 result['sub_question'] = item['sub_question']
                 result['strategy'] = item['strategy']
                 sub_question_results.append(result)

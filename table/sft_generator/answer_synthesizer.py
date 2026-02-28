@@ -1,25 +1,25 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-阶段 3：答案汇总模块
+Stage 3: Answer Synthesis Module
 """
 
 
 class AnswerSynthesizer:
     """
-    答案汇总器类
+    Answer Synthesizer Class
     """
 
     def __init__(self, llm_api):
         self.llm_api = llm_api
 
-    def synthesize_answer(self, decomposition, sub_question_results, original_question):
+    def synthesize_answer(self, table, sub_question_results, original_question):
         """
-        阶段 3：答案汇总
+        Stage 3: Answer Synthesis
         """
         results_str = []
         for i, result in enumerate(sub_question_results):
-            # 处理任意数量的子问题序数
+            # Handle arbitrary number of sub-question ordinals
             if i == 0:
                 ordinal = "first"
             elif i == 1:
@@ -34,42 +34,116 @@ class AnswerSynthesizer:
                 ordinal = f"{i + 1}th"
             results_str.append(
                 f"{ordinal.capitalize()} sub-question: {result['sub_question']}\n"
-                f"Strategy: {result['strategy']}\n"
                 f"Answer: {result['answer']}"
             )
 
-        prompt = (
-            f"Please synthesize the answers to the sub-questions into a comprehensive response to the original question.\n\n"
-            f"Original Question: {original_question}\n\n"
-            f"Sub-question Answers:\n"
-            f"{chr(10).join(results_str)}\n\n"
-            f"Your response must strictly adhere to the following requirements:\n"
-            f"1. Follow the logical flow from the sub-question answers to the final answer\n"
-            f"2. Be coherent and easy to understand\n"
-            f"3. Include all relevant information from the sub-question answers\n"
-            f"4. End with a clear final answer in the exact format: 'Final Answer: [Your answer]'\n"
-            f"5. Avoid mentioning 'sub-questions' or 'strategies'\n"
-            f"6. The final answer must be concise and directly address the question\n"
-            f"7. If the answer is a number representing a quantity (e.g., 'how many'), only include the numeric value without any additional text or units\n"
-            f"8. If the answer is a number representing a duration (e.g., 'how long'), include the numeric value with appropriate units (e.g., 'years', 'days')\n"
-            f"9. If the question asks for a name, category, or identifier (e.g., 'which place', 'which team', 'what is the name'), ensure the final answer includes only the name or identifier, not numerical values or other details\n"
-            f"10. Verify that the final answer is consistent with all sub-question answers\n"
-            f"11. Ensure that your answer is accurate and free of errors\n"
-            f"12. If there are conflicting answers in sub-questions, resolve them logically\n\n"
-            f"Format your response with the following structure:\n"
-            f"1. Start with a clear introductory sentence that explains your approach to answering the question\n"
-            f"2. Provide detailed reasoning steps that lead from the available information to the final answer\n"
-            f"3. Include relevant calculations, data points, or examples from the table to support your reasoning\n"
-            f"4. End with a concise final answer in the required format\n\n"
-            f"[Your logical reasoning flow here]\n\n"
-            f"Final Answer: [Your answer]"
-        )
+        prompt=f"""
+# Role
+You are a Lead Data Analyst. Your goal is to provide a logically flawless, step-by-step reasoning chain for the "Original Question" by analyzing the provided Table.
+
+# Inputs
+- **Original Question**: {original_question}
+- **Table Data**: {table}
+- **Analytical Reference Points (Intermediate Fact Check)**:
+{chr(10).join(results_str)}
+
+# Core Strategy: Autonomous Reasoning with Milestone Alignment
+You must think "Step-by-Step" from scratch. Do not simply list the Reference Points; instead, use them as factual anchors to ensure your autonomous path is correct.
+
+1. **Evidence-Based Derivation**:
+   Develop a continuous reasoning narrative. Think step by step. For every stage of the logic, show your work: cite specific rows/columns and explain the calculations.
+
+2. **Milestone Calibration**:
+   The "Analytical Reference Points" are the ground truth for intermediate facts. Your independent reasoning MUST align with these results. If a discrepancy arises, re-audit the table data—the Reference Points are provided to prevent you from making mistakes.
+
+3. **Strategic Synthesis**:
+   Maintain a high reasoning density. If multiple Reference Points belong to the same logical phase (e.g., locating an entry and then checking its date), weave them into a single, fluid analytical paragraph.
+
+4. **Natural Integration**:
+   Do NOT use "As per sub-question 1" or "The hint says". Treat the intermediate facts as your own expert discoveries. Eliminate all meta-talk.
+
+# Response Format
+[Reasoning Process]
+(A cohesive, step-by-step analytical narrative. Integrate all necessary milestones naturally into your own expert deduction. Group related logic into dense phases.)
+
+Final Answer: [Final Answer]
+[Value only. No brackets.]
+"""
+        try:
+            # print("Answer synthesis prompt sent to LLM:", repr(prompt))  # Debug info
+            response = self.llm_api.call(prompt)
+
+            # Refine the answer
+            refined_response = self.refine_answer(response, table, original_question, sub_question_results)
+
+            # print("LLM returned answer synthesis response:", repr(response))  # Debug info
+            return refined_response
+        except Exception as e:
+            print(f"Answer synthesis failed: {e}")
+            return "Unable to synthesize answer"
+
+    def refine_answer(self, synthesized_answer, table, original_question):
+        """
+        Refine the reasoning process of the synthesized answer to ensure it's evidence-based and remove redundancy.
+        The final answer is guaranteed to be correct, so only the reasoning process should be optimized.
+
+        Args:
+            synthesized_answer: The original synthesized answer
+            table: The table data
+            original_question: The original question
+            sub_question_results: List of sub-question results
+
+        Returns:
+            Answer with optimized reasoning process and identical final answer
+        """
+        # Extract the final answer from the synthesized response
+        final_answer = ""
+        lines = synthesized_answer.split("\n")
+        for line in lines:
+            line = line.strip()
+            if line.startswith("Final Answer:"):
+                final_answer = line.split("Final Answer:", 1)[1].strip()
+                break
+        
+        prompt = f"""
+# Task: Reasoning Process Optimization
+
+## Objective
+Improve the reasoning process of the provided answer while strictly preserving the final answer.
+
+---
+
+## Input
+1. **Original Question**: {original_question}
+2. **Table Data**: {table}
+3. **Answer to Optimize** (Includes reasoning steps and the final answer.):
+{original_question}
+
+---
+
+## Optimization Requirements
+
+1. Every reasoning step must explicitly reference specific data from the table.
+2. All references must match the exact values shown in the table.
+3. Do NOT introduce any information that is not present in the table.
+4. Do NOT modify the final answer under any circumstances.
+
+---
+
+## Output Format
+
+[Rewritten reasoning process here]
+
+Final Answer: [Original answer unchanged]
+
+"""
 
         try:
-            print("发送给 LLM 的答案汇总提示:", repr(prompt))  # 调试信息
-            response = self.llm_api.call(prompt)
-            print("LLM 返回的答案汇总响应:", repr(response))  # 调试信息
-            return response
+            # print("Reasoning process optimization prompt sent to LLM:", repr(prompt))  # Debug info
+            refined_response = self.llm_api.call(prompt)
+            # print("LLM returned reasoning process optimization response:", repr(refined_response))  # Debug info
+
+            return refined_response
         except Exception as e:
-            print(f"答案汇总失败: {e}")
-            return "无法汇总答案"
+            print(f"Reasoning process optimization failed: {e}")
+            return synthesized_answer  # Return original answer if optimization fails

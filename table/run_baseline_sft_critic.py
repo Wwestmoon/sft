@@ -21,12 +21,7 @@ def build_distillation_prompt(markdown_table, question):
     prompt = (
         f"Please analyze the following table and answer the question in detail:\n\n{markdown_table}\n\n"
         f"Question: {question}\n\n"
-        f"Your response should include:\n"
-        f"1. A clear answer to the question\n"
-        f"2. A detailed reasoning process showing how you arrived at the answer\n"
-        f"3. Any relevant calculations or data points from the table\n"
-        f"\nPlease provide a comprehensive and thorough response. "
-        f"At the very end of your response, please include the final answer in the format: 'Final Answer: [your answer]'."
+        f"Please think step by step and include the final answer in the format: 'Final Answer: [your answer]'."
     )
     return prompt
 
@@ -227,12 +222,7 @@ class ErrorFixer:
             f"Expected Answer: {expected_answer}\n"
             f"Error Reason: {error_analysis.get('reason', '')}\n"
             f"Improvement Suggestion: {error_analysis.get('suggestion', '')}\n\n"
-            f"Your improved response should:\n"
-            f"1. Address the error identified in the analysis\n"
-            f"2. Provide a clear and correct answer\n"
-            f"3. Follow the same structure as the original response\n"
-            f"4. Be concise and focused on the question\n"
-            f"5. End with the correct final answer in the exact format: 'Final Answer: {expected_answer}'"
+            f"Please think step by step and include the final answer in the format: 'Final Answer: [your answer]'."
         )
 
         try:
@@ -481,7 +471,7 @@ def main():
                         default='/Users/westmoon/mycode/table/processed_data/training_processed.jsonl',
                         help='输入文件路径')
     parser.add_argument('--output_file', type=str,
-                        default='/Users/westmoon/mycode/table/baseline_results/baseline_sft_critic',
+                        default='/Users/westmoon/mycode/table/baseline_results/baseline_sft_critic_ver1',
                         help='输出文件路径')
     parser.add_argument('--num_samples', type=int, default=None,
                         help='处理的样本数量')
