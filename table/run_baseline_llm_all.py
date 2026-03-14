@@ -12,6 +12,8 @@ import sys
 import re
 import csv
 import time
+import random
+from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 
@@ -272,10 +274,8 @@ def process_sample(sample, model_config, task_type='wtq'):
 
 
 def run_baseline(input_file, output_file, model_config, num_samples=10, max_workers=10, task_type='wtq'):
-    """
-    运行 Zero-Shot Baseline，支持并发处理
-    """
-    # 加载样本数据并统一 key 格式
+    """运行 Zero‑Shot Baseline，支持并发处理，只处理 `num_samples` 条样本。"""
+    # 1️⃣ 加载并统一 key 格式
     samples = []
     with open(input_file, 'r', encoding='utf-8') as f:
         for line in f:
@@ -284,14 +284,14 @@ def run_baseline(input_file, output_file, model_config, num_samples=10, max_work
                 raw = json.loads(line)
                 samples.append(normalize_sample(raw, task_type))
 
-    # 只处理 num_samples 个样本
+    # 2️⃣ 若需要，仅截取前 `num_samples` 条
     if num_samples > 0 and num_samples < len(samples):
         samples = samples[:num_samples]
 
     print(f"总样本数: {len(samples)}")
     print(f"并发工作线程数: {max_workers}")
 
-    # 检查输出文件是否已存在，读取已处理的样本
+    # 3️⃣ 读取已存在的输出文件，过滤已处理的 id（断点续传）
     processed_sample_ids = set()
     if os.path.exists(output_file):
         with open(output_file, 'r', encoding='utf-8') as f:
@@ -305,12 +305,11 @@ def run_baseline(input_file, output_file, model_config, num_samples=10, max_work
                     except Exception as e:
                         print(f"解析已处理样本数据失败: {e}")
 
-    # 过滤掉已处理的样本
-    samples = [sample for sample in samples if sample['id'] not in processed_sample_ids]
+    # 4️⃣ 只保留未处理的样本进行计算
+    samples_to_process = [s for s in samples if s['id'] not in processed_sample_ids]
+    print(f"需要处理的新样本数: {len(samples_to_process)}")
 
-    print(f"需要处理的新样本数: {len(samples)}")
-
-    # 确保输出目录存在
+    # 5️⃣ 确保输出目录存在
     output_dir = os.path.dirname(output_file)
     if output_dir and not os.path.exists(output_dir):
         os.makedirs(output_dir, exist_ok=True)
@@ -318,23 +317,18 @@ def run_baseline(input_file, output_file, model_config, num_samples=10, max_work
     successful_results = []
     errors = []
 
-    # 使用线程池并发处理样本，为每个任务创建独立的上下文
+    # 6️⃣ 并发执行
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        # 提交所有任务
-        future_to_sample = {executor.submit(process_sample, sample, model_config, task_type): sample for sample in samples}
-
-        # 收集结果
+        future_to_sample = {executor.submit(process_sample, sample, model_config, task_type): sample for sample in samples_to_process}
         for future in as_completed(future_to_sample):
             try:
                 result_type, result = future.result()
                 if result_type == 'success':
                     successful_results.append(result)
-                    # 立即写入到输出文件
                     with open(output_file, 'a', encoding='utf-8') as f:
                         f.write(json.dumps(result, ensure_ascii=False) + '\n')
                 else:
                     errors.append(result)
-                    # 立即写入到错误文件
                     error_file = output_file.replace('.jsonl', '_errors.jsonl')
                     with open(error_file, 'a', encoding='utf-8') as f:
                         f.write(json.dumps(result, ensure_ascii=False) + '\n')
@@ -459,10 +453,15 @@ def main():
     parser.add_argument("--base_url", default="https://yunwu.ai/v1", help="API 端点")
     parser.add_argument("--api_key", default="sk-mBv9A5UrRCQ7OzJDPLKZkjIRzoywwVcu4wvStR4P6E7K9Kw9", help="API 密钥")
     parser.add_argument("--num_samples", type=int, default=10, help="测试样本数量")
-    parser.add_argument("--output_dir", default='/Users/westmoon/mycode/table/baseline_results', help="输出目录")
+    parser.add_argument("--output_dir", default='/Users/westmoon/mycode/table/baseline_all', help="输出目录")
     parser.add_argument("--temperature", type=float, default=0.1, help="采样温度")
     parser.add_argument("--top_p", type=float, default=0.9, help="核采样参数")
     parser.add_argument("--max_workers", type=int, default=10, help="最大并发工作线程数")
+    parser.add_argument("--num_cycles", type=int, default=1, help="循环测试次数")
+    parser.add_argument("--save_csv", action="store_true", help="是否保存循环结果到 CSV 文件")
+    parser.add_argument("--datasets", default="", help="逗号分隔的数据集名称，只测试这些文件；不填则默认全部")
+
+
 
     args = parser.parse_args()
 
@@ -475,19 +474,45 @@ def main():
         "top_p": args.top_p
     }
 
-    os.makedirs(args.output_dir, exist_ok=True)
+    # CSV 汇总文件（追加模式）
+    csv_path = os.path.join(args.output_dir, 'benchmark_summary.csv')
+    # 写入表头（如果文件不存在）
+    if not os.path.exists(csv_path):
+        with open(csv_path, 'w', encoding='utf-8', newline='') as csvfile:
+            writer = csv.writer(csvfile)
+            writer.writerow(['timestamp', 'model', 'file_type', 'accuracy'])
+    # 用于后续统计的字典
+    all_results = {}
 
-    # 所有待测试的文件列表：wtq + test 目录下的文件
     test_files = [
         '/Users/westmoon/mycode/table/processed_data/test_processed.jsonl',
     ]
     test_dir = '/Users/westmoon/mycode/table/test'
+    dataset_to_path = {}
+    # 将 processed_data 中的默认文件加入映射
+    dataset_to_path[os.path.splitext(os.path.basename(test_files[0]))[0]] = test_files[0]
     if os.path.isdir(test_dir):
         for fname in sorted(os.listdir(test_dir)):
             if fname.endswith('.jsonl'):
-                test_files.append(os.path.join(test_dir, fname))
-
-    all_results = {}
+                full_path = os.path.join(test_dir, fname)
+                test_files.append(full_path)
+                dataset_to_path[os.path.splitext(fname)[0]] = full_path
+    # 根据用户指定的 datasets 进行过滤
+    if args.datasets:
+        requested = {name.strip() for name in args.datasets.split(',') if name.strip()}
+        filtered = []
+        for name in requested:
+            if name in dataset_to_path:
+                filtered.append(dataset_to_path[name])
+            else:
+                print(f"⚠ 警告：未找到数据集 '{name}'，将被忽略")
+        test_files = filtered
+    # 如果未指定 datasets 且 test_files 为空（极端情况），保留原始列表
+    if not test_files:
+        print("⚠ 警告：未找到任何待测文件，将使用默认的 processed_data 文件")
+        test_files = [
+            '/Users/westmoon/mycode/table/processed_data/test_processed.jsonl',
+        ]
 
     for input_file in test_files:
         task_type = detect_task_type(input_file)
@@ -505,28 +530,48 @@ def main():
         if os.path.exists(error_file):
             os.remove(error_file)
 
-        successful_results, errors = run_baseline(
-            input_file,
-            output_file,
-            model_config,
-            num_samples=args.num_samples,
-            max_workers=args.max_workers,
-            task_type=task_type
-        )
-
-        if successful_results:
-            correct_predictions = sum(1 for result in successful_results if result['match'])
-            accuracy = correct_predictions / len(successful_results) * 100
-            print(f"\n--- {task_name} 结果 ---")
-            print(f"成功: {len(successful_results)}, 失败: {len(errors)}, 准确率: {accuracy:.2f}%")
+        # 根据循环次数决定是否使用循环测试函数
+        if args.num_cycles > 1:
+            cycle_results = run_cyclic_test(
+                input_file,
+                model_config,
+                num_samples=args.num_samples,
+                max_workers=args.max_workers,
+                num_cycles=args.num_cycles
+            )
+            avg_res = calculate_average_score(cycle_results)
+            accuracy = avg_res['average_accuracy']
+            if args.save_csv:
+                csv_file = os.path.join(args.output_dir, f"{model_config['model']}_{task_name}_cycle_results.csv")
+                save_cycle_results_to_csv(cycle_results, csv_file)
         else:
-            accuracy = 0.0
-            print(f"\n--- {task_name}: 没有成功的测试结果 ---")
+            successful_results, errors = run_baseline(
+                input_file,
+                output_file,
+                model_config,
+                num_samples=args.num_samples,
+                max_workers=args.max_workers,
+                task_type=task_type
+            )
+            if successful_results:
+                correct_predictions = sum(1 for result in successful_results if result['match'])
+                accuracy = correct_predictions / len(successful_results) * 100
+                print(f"\n--- {task_name} 结果 ---")
+                print(f"成功: {len(successful_results)}, 失败: {len(errors)}, 准确率: {accuracy:.2f}%")
+            else:
+                accuracy = 0.0
+                print(f"\n--- {task_name}: 没有成功的测试结果 ---")
+                errors = []
+
+        # 记录单个任务的统计到 CSV（追加模式）
+        with open(csv_path, 'a', encoding='utf-8', newline='') as csvfile:
+            writer = csv.writer(csvfile)
+            writer.writerow([datetime.now().isoformat(), args.model, task_type, f"{accuracy:.2f}"])
 
         all_results[task_name] = {
             'task_type': task_type,
-            'successful': len(successful_results),
-            'errors': len(errors),
+            'successful': len(successful_results) if args.num_cycles == 1 else sum(r['successful_samples'] for r in cycle_results),
+            'errors': len(errors) if args.num_cycles == 1 else sum(r['errors'] for r in cycle_results),
             'accuracy': accuracy
         }
 
