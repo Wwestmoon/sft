@@ -457,7 +457,7 @@ def main():
     parser.add_argument("--temperature", type=float, default=0.1, help="采样温度")
     parser.add_argument("--top_p", type=float, default=0.9, help="核采样参数")
     parser.add_argument("--max_workers", type=int, default=10, help="最大并发工作线程数")
-    parser.add_argument("--num_cycles", type=int, default=1, help="循环测试次数")
+    parser.add_argument("--num_cycles", type=int, default=2, help="循环测试次数")
     parser.add_argument("--save_csv", action="store_true", help="是否保存循环结果到 CSV 文件")
     parser.add_argument("--datasets", default="", help="逗号分隔的数据集名称，只测试这些文件；不填则默认全部")
 
@@ -539,11 +539,22 @@ def main():
                 max_workers=args.max_workers,
                 num_cycles=args.num_cycles
             )
-            avg_res = calculate_average_score(cycle_results)
-            accuracy = avg_res['average_accuracy']
+            # 直接打印每个循环的结果，而不是只打印平均值
+            for cr in cycle_results:
+                print(f"\n循环 {cr['cycle']} 详细结果:")
+                print(f"  总样本数: {cr['total_samples']}")
+                print(f"  成功样本: {cr['successful_samples']}")
+                print(f"  错误样本: {cr['errors']}")
+                print(f"  准确率: {cr['accuracy']:.2f}%")
+                print(f"  正确预测: {cr['correct_predictions']}")
+                print(f"  错误预测: {cr['error_predictions']}")
+            # 如果需要汇总 CSV，仍然可以保存每个循环的结果到 CSV（追加模式）
             if args.save_csv:
                 csv_file = os.path.join(args.output_dir, f"{model_config['model']}_{task_name}_cycle_results.csv")
                 save_cycle_results_to_csv(cycle_results, csv_file)
+            # 计算平均分数仅在需要时使用（不再自动打印）
+            # avg_res = calculate_average_score(cycle_results)
+            # accuracy = avg_res['average_accuracy']
         else:
             successful_results, errors = run_baseline(
                 input_file,
@@ -563,6 +574,11 @@ def main():
                 print(f"\n--- {task_name}: 没有成功的测试结果 ---")
                 errors = []
 
+
+        # 在写入 CSV 前确保 accuracy 已定义
+        if args.num_cycles > 1:
+            # 计算循环的平均准确率，供 CSV 记录使用
+            accuracy = sum(cr['accuracy'] for cr in cycle_results) / len(cycle_results) if cycle_results else 0.0
         # 记录单个任务的统计到 CSV（追加模式）
         with open(csv_path, 'a', encoding='utf-8', newline='') as csvfile:
             writer = csv.writer(csvfile)
